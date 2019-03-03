@@ -11,6 +11,7 @@ pub trait GetExpiry {
     fn expiry(&self) -> DateTime<Utc>;
 }
 
+#[derive(Debug)]
 pub struct CondvarStore<T: GetExpiry> {
     pub cached: Arc<RwLock<T>>,
     pub is_inflight: Arc<(Mutex<bool>, Condvar)>,
