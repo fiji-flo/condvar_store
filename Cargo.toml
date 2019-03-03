@@ -1,0 +1,15 @@
+[package]
+name = "condvar_store"
+version = "0.0.1"
+authors = ["Florian Merz <flomerz@gmail.com>"]
+edition = "2018"
+license = "MIT"
+repository = "https://github.com/fiji-flo/condvar_store"
+documentation = "https://docs.rs/crate/condvar_store"
+keywords = ["cache", "async", "concurrent"]
+categories = []
+readme = "README.md"
+include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
+
+[dependencies]
+chrono = "0.4"
