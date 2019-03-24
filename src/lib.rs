@@ -1,13 +1,28 @@
+extern crate chrono;
+extern crate failure;
+
+#[macro_use]
+extern crate failure_derive;
+
 use chrono::DateTime;
 use chrono::Utc;
+use failure::Error;
 use std::sync::Arc;
 use std::sync::Condvar;
 use std::sync::Mutex;
 use std::sync::RwLock;
 use std::time::Duration;
 
+#[derive(Debug, Fail)]
+pub enum CondvarStoreError {
+    #[fail(display = "Timeout while waiting for GET")]
+    GetTimeout,
+    #[fail(display = "Poisoned lock: {}", _0)]
+    PoisonedLock(String),
+}
+
 pub trait GetExpiry {
-    fn get(&mut self) -> Result<(), String>;
+    fn get(&mut self) -> Result<(), Error>;
     fn expiry(&self) -> DateTime<Utc>;
 }
 
@@ -47,21 +62,21 @@ impl<T: GetExpiry> CondvarStore<T> {
         self
     }
 
-    fn update(&self) -> Result<(), String> {
+    fn update(&self) -> Result<(), Error> {
         let mut k = self
             .cached
             .write()
-            .map_err(|e| format!("Unable to get write lock for cache: {}", e))?;
+            .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
         k.get()?;
         let mut expiry = self
             .expiry
             .write()
-            .map_err(|e| format!("Error getting lock for expiry: {}", e))?;
+            .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
         *expiry = k.expiry();
         Ok(())
     }
 
-    pub fn get(&self) -> Result<Arc<RwLock<T>>, String> {
+    pub fn get(&self) -> Result<Arc<RwLock<T>>, Error> {
         let now = Utc::now();
         if let Ok(expiry) = self.expiry.read() {
             if *expiry > now {
@@ -73,7 +88,7 @@ impl<T: GetExpiry> CondvarStore<T> {
         let chosen = {
             let mut is_inflight = lock
                 .lock()
-                .map_err(|e| format!("Error getting lock for inflight: {}", e))?;
+                .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
             if !*is_inflight {
                 *is_inflight = true;
                 true
@@ -85,20 +100,20 @@ impl<T: GetExpiry> CondvarStore<T> {
             let updated = self.update();
             let mut is_inflight = lock
                 .lock()
-                .map_err(|e| format!("Error getting lock for inflight: {}", e))?;
+                .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
             assert!(*is_inflight);
             *is_inflight = false;
             updated?;
         }
         let mut is_inflight = lock
             .lock()
-            .map_err(|e| format!("Error while retrieving inflight lock: {}", e))?;
+            .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
         while *is_inflight {
             let r = cvar
                 .wait_timeout(is_inflight, Duration::from_millis(self.timeout))
-                .map_err(|e| format!("Error while waiting for GET: {}", e))?;
+                .map_err(|e| CondvarStoreError::PoisonedLock(e.to_string()))?;
             if r.1.timed_out() {
-                return Err(String::from("Timeout while waiting for GET"));
+                return Err(CondvarStoreError::GetTimeout.into());
             }
             is_inflight = r.0;
         }
@@ -119,7 +134,7 @@ mod test {
     }
 
     impl GetExpiry for R1 {
-        fn get(&mut self) -> Result<(), String> {
+        fn get(&mut self) -> Result<(), Error> {
             self.r += 1;
             self.exp = Utc::now();
             Ok(())
@@ -136,7 +151,7 @@ mod test {
     }
 
     impl GetExpiry for R2 {
-        fn get(&mut self) -> Result<(), String> {
+        fn get(&mut self) -> Result<(), Error> {
             self.r += 1;
             self.exp = Utc::now() + chrono::Duration::seconds(10);
             Ok(())
@@ -153,7 +168,7 @@ mod test {
     }
 
     impl GetExpiry for RTimeout {
-        fn get(&mut self) -> Result<(), String> {
+        fn get(&mut self) -> Result<(), Error> {
             thread::sleep(Duration::from_millis(10));
             self.r += 1;
             self.exp = Utc::now() + chrono::Duration::seconds(10);
@@ -172,11 +187,11 @@ mod test {
     }
 
     impl GetExpiry for RError {
-        fn get(&mut self) -> Result<(), String> {
+        fn get(&mut self) -> Result<(), Error> {
             thread::sleep(Duration::from_millis(10));
             self.e += 1;
             if self.e < 2 {
-                return Err(String::from("error fetching"));
+                return Err(CondvarStoreError::GetTimeout.into());
             }
             self.r += 1;
             self.exp = Utc::now() + chrono::Duration::seconds(10);
@@ -197,7 +212,7 @@ mod test {
     }
 
     #[test]
-    fn test_get_from() -> Result<(), String> {
+    fn test_get_from() -> Result<(), Error> {
         let r1 = R1 {
             r: 0,
             exp: Utc.timestamp(0, 0),

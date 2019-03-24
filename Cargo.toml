@@ -1,6 +1,6 @@
 [package]
 name = "condvar_store"
-version = "0.0.1"
+version = "0.0.2"
 authors = ["Florian Merz <flomerz@gmail.com>"]
 edition = "2018"
 license = "MIT"
@@ -13,3 +13,5 @@ include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE"]
 
 [dependencies]
 chrono = "0.4"
+failure = "0.1.5"
+failure_derive = "0.1.5"
